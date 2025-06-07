@@ -1,3 +1,3 @@
 # SeeTu
-Command and Control Framework\n
+Command and Control Framework 
 Work in progress
